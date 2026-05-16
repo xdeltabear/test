@@ -1,0 +1,11 @@
+name: Protected Deploy Test
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: protected-deploy
+    steps:
+      - name: Deploy
+        run: echo "Deploying to protected environment"
